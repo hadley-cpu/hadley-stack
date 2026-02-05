@@ -29,7 +29,8 @@ TRANSLATIONS = {
         "sec2_title": "2. 입수 설정",
         "stack_limit_label": "적재제한(단)",
         "max_box_label": "박스최대(g)",
-        "qty_range_label": "수량 (최소~최대)",
+        "qty_range_label": "박스 입수량 (최소~최대)",
+        "layer_range_label": "파레트 층당 박스 (최소~최대)",
         "single_item_label": "단품(1개)",
         
         "sec3_title": "3. 외부 설정",
@@ -40,7 +41,7 @@ TRANSLATIONS = {
         "btn_calc": "분석 시작",
         "err_dim_fmt": "❌ 치수 오류",
         "success_msg": "✅ 분석 완료! ({n}건)",
-        "err_no_result": "❌ 결과 없음",
+        "err_no_result": "❌ 결과 없음 (조건을 완화해보세요)",
         
         "res_title": "4. 추천 적재 옵션",
         "opt_label": "옵션 선택",
@@ -113,7 +114,8 @@ TRANSLATIONS = {
         "sec2_title": "2. Qty Settings",
         "stack_limit_label": "StackLimit",
         "max_box_label": "BoxMax(g)",
-        "qty_range_label": "Qty (Min~Max)",
+        "qty_range_label": "Qty inside Box (Min~Max)",
+        "layer_range_label": "Boxes per Layer (Min~Max)",
         "single_item_label": "Single(1ea)",
         
         "sec3_title": "3. External",
@@ -344,7 +346,7 @@ class PalletLogic:
         bct_kgf = bct_newton / 9.80665 * 1000 
         return bct_kgf 
 
-    def find_candidates(self, p_dims_input, p_weight_g, max_box_w_g, box_type_idx, box_margin, min_qty, max_qty, pallet_dims, allow_rotation, stack_limit):
+    def find_candidates(self, p_dims_input, p_weight_g, max_box_w_g, box_type_idx, box_margin, min_qty, max_qty, pallet_dims, allow_rotation, stack_limit, min_layer_qty, max_layer_qty):
         pl_L, pl_W, pl_H = pallet_dims
         if max_box_w_g <= 0: max_box_w_g = 999999
         if p_weight_g <= 0: p_weight_g = 1
@@ -412,18 +414,20 @@ class PalletLogic:
                         self._solve_grid(candidates, seen_configs, out_l, out_w, out_h, 
                                          usable_pl_L, usable_pl_W, p_layers, qty, box_weight_kg,
                                          bct_val, stack_load, sf, is_unsafe,
-                                         pack_layout, (p_L, p_W, p_H), pallet_dims, box_inner_dims)
+                                         pack_layout, (p_L, p_W, p_H), pallet_dims, box_inner_dims,
+                                         min_layer_qty, max_layer_qty)
                         
                         self._solve_pinwheel(candidates, seen_configs, out_l, out_w, out_h, 
                                              usable_pl_L, usable_pl_W, p_layers, qty, box_weight_kg,
                                              bct_val, stack_load, sf, is_unsafe,
-                                             pack_layout, (p_L, p_W, p_H), pallet_dims, box_inner_dims)
+                                             pack_layout, (p_L, p_W, p_H), pallet_dims, box_inner_dims,
+                                             min_layer_qty, max_layer_qty)
 
         if not candidates: return []
         candidates.sort(key=lambda x: x['score'], reverse=True)
         return candidates[:12]
 
-    def _solve_grid(self, candidates, seen_configs, out_l, out_w, out_h, pl_L, pl_W, p_layers, qty, w_kg, bct, load, sf, unsafe, pack_layout, prod_dims, pallet_dims, box_inner):
+    def _solve_grid(self, candidates, seen_configs, out_l, out_w, out_h, pl_L, pl_W, p_layers, qty, w_kg, bct, load, sf, unsafe, pack_layout, prod_dims, pallet_dims, box_inner, min_lq, max_lq):
         orientations = [(out_l, out_w), (out_w, out_l)]
         for (L_box, W_box) in orientations:
             nx = int(pl_L // L_box)
@@ -431,6 +435,11 @@ class PalletLogic:
             if nx * ny == 0: continue
             
             yield_per_layer = nx * ny
+            
+            # [NEW] Layer qty check
+            if yield_per_layer < min_lq: continue
+            if max_lq > 0 and yield_per_layer > max_lq: continue
+
             total = yield_per_layer * p_layers * qty
             total_boxes = yield_per_layer * p_layers
             eff = (out_l * out_w * yield_per_layer) / (pl_L * pl_W) * 100
@@ -464,7 +473,7 @@ class PalletLogic:
                 })
                 seen_configs.add(config_key)
 
-    def _solve_pinwheel(self, candidates, seen_configs, out_l, out_w, out_h, pl_L, pl_W, p_layers, qty, w_kg, bct, load, sf, unsafe, pack_layout, prod_dims, pallet_dims, box_inner):
+    def _solve_pinwheel(self, candidates, seen_configs, out_l, out_w, out_h, pl_L, pl_W, p_layers, qty, w_kg, bct, load, sf, unsafe, pack_layout, prod_dims, pallet_dims, box_inner, min_lq, max_lq):
         box_orients = [(out_l, out_w), (out_w, out_l)]
         for (L_box, W_box) in box_orients:
             max_k = int(L_box // W_box) + 2
@@ -472,6 +481,11 @@ class PalletLogic:
                 block_size = L_box + (k * W_box)
                 if block_size <= min(pl_L, pl_W):
                     yield_per_layer = 4 * k
+                    
+                    # [NEW] Layer qty check
+                    if yield_per_layer < min_lq: continue
+                    if max_lq > 0 and yield_per_layer > max_lq: continue
+
                     total = yield_per_layer * p_layers * qty
                     total_boxes = yield_per_layer * p_layers
                     eff = (out_l * out_w * yield_per_layer) / (pl_L * pl_W) * 100
@@ -689,6 +703,8 @@ def main():
     if 'min_q' not in st.session_state: st.session_state.min_q = 10
     if 'max_q' not in st.session_state: st.session_state.max_q = 100
     if 'single_item' not in st.session_state: st.session_state.single_item = False
+    if 'min_layer_q' not in st.session_state: st.session_state.min_layer_q = 4
+    if 'max_layer_q' not in st.session_state: st.session_state.max_layer_q = 0
 
     try:
         st.session_state.w_val = float(st.session_state.w_val)
@@ -696,6 +712,8 @@ def main():
         st.session_state.stack_limit = int(st.session_state.stack_limit)
         st.session_state.min_q = int(st.session_state.min_q)
         st.session_state.max_q = int(st.session_state.max_q)
+        st.session_state.min_layer_q = int(st.session_state.min_layer_q)
+        st.session_state.max_layer_q = int(st.session_state.max_layer_q)
     except: pass
 
     # Clear old PDF cache
@@ -719,7 +737,8 @@ def main():
                     'ar': st.session_state.allow_rot, 'w': st.session_state.w_val, 
                     'mw': st.session_state.max_w_val, 'sl': st.session_state.stack_limit,
                     'bt': st.session_state.box_t_idx, 'nq': st.session_state.min_q,
-                    'xq': st.session_state.max_q, 'si': st.session_state.single_item
+                    'xq': st.session_state.max_q, 'si': st.session_state.single_item,
+                    'nl': st.session_state.min_layer_q, 'xl': st.session_state.max_layer_q
                 }
                 st.code(base64.b64encode(json.dumps(data).encode()).decode(), language="text")
             
@@ -738,6 +757,8 @@ def main():
                     st.session_state.min_q = int(data['nq'])
                     st.session_state.max_q = int(data['xq'])
                     st.session_state.single_item = data.get('si', False)
+                    st.session_state.min_layer_q = int(data.get('nl', 4))
+                    st.session_state.max_layer_q = int(data.get('xl', 0))
                     clear_pdf_cache()
                     st.rerun()
                 except: st.error("Invalid")
@@ -772,6 +793,13 @@ def main():
             q3.number_input("Max", key="max_q", step=5, format="%d", label_visibility="collapsed", on_change=clear_pdf_cache)
             
         st.checkbox(t['single_item_label'], key="single_item", on_change=clear_pdf_cache)
+
+        # [NEW] Layer Qty
+        st.caption(t['layer_range_label'])
+        lq1, lq2, lq3 = st.columns([1, 0.2, 1])
+        st.session_state.min_layer_q = lq1.number_input("Min Layer", value=4, step=1, label_visibility="collapsed", on_change=clear_pdf_cache)
+        lq2.markdown("<div style='text-align:center; padding-top:5px'>~</div>", unsafe_allow_html=True)
+        st.session_state.max_layer_q = lq3.number_input("Max Layer", value=0, step=1, label_visibility="collapsed", on_change=clear_pdf_cache)
 
         st.divider()
 
@@ -811,7 +839,8 @@ def main():
                     p_dims, st.session_state.w_val, st.session_state.max_w_val, 
                     st.session_state.box_t_idx, margin_val, 
                     st.session_state.min_q, st.session_state.max_q, 
-                    tuple(pl_dims_parsed), st.session_state.allow_rot, st.session_state.stack_limit
+                    tuple(pl_dims_parsed), st.session_state.allow_rot, st.session_state.stack_limit,
+                    st.session_state.min_layer_q, st.session_state.max_layer_q
                 )
                 if candidates:
                     st.session_state.sim_results = candidates
@@ -971,8 +1000,9 @@ def main():
 
 if __name__ == "__main__":
     main()
-# Powered by Gemini
 
 
     # streamlit run app.py
-    # git push -u origin main
+    # 1.git add app.py
+    # 2.git commit -m "Update app.py: fix streamlit code"
+    # 3.git push origin main
