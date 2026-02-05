@@ -5,9 +5,10 @@ import json
 import base64
 import os
 import tempfile
-import kaleido
 import streamlit as st
 import plotly.graph_objects as go
+# [FIX] kaleido 명시적 임포트 (오류 방지용)
+import kaleido 
 from fpdf import FPDF
 
 # ==========================================
@@ -292,7 +293,8 @@ def create_pdf_report(res, p_dims_input, pallet_dims, weight_val, lang_code, fig
         for i, fig in enumerate(figures):
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 try:
-                    fig.write_image(tmp.name, width=500, height=350)
+                    # [FIX] 엔진 명시적 사용 시도 (선택적)
+                    fig.write_image(tmp.name, width=500, height=350, engine="kaleido")
                     x_pos = 10 if i % 2 == 0 else 110
                     if i % 2 == 0 and i > 0: 
                         y_pos += 70
@@ -437,7 +439,6 @@ class PalletLogic:
             
             yield_per_layer = nx * ny
             
-            # [NEW] Layer qty check
             if yield_per_layer < min_lq: continue
             if max_lq > 0 and yield_per_layer > max_lq: continue
 
@@ -483,7 +484,6 @@ class PalletLogic:
                 if block_size <= min(pl_L, pl_W):
                     yield_per_layer = 4 * k
                     
-                    # [NEW] Layer qty check
                     if yield_per_layer < min_lq: continue
                     if max_lq > 0 and yield_per_layer > max_lq: continue
 
@@ -1001,6 +1001,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
     # streamlit run app.py
