@@ -1,121 +1,185 @@
 import math
 import re
 import itertools
+import json
+import base64
+import os
+import tempfile
 import streamlit as st
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from fpdf import FPDF
 
 # ==========================================
 # 0. 다국어 딕셔너리
 # ==========================================
 TRANSLATIONS = {
-    "Korean": {
-        "sidebar_title": "입력 설정",
-        "sec1_title": "1. 제품 & 무게 정보",
-        "dim_label": "제품 치수 (예: 180*120*50)",
-        "dim_help": "가로, 세로, 높이를 구분자(*, x, 공백, 콤마)로 입력하세요.",
-        "rot_label": "제품 회전 허용 (L,W,H 변경)",
-        "weight_label": "제품무게(g)",
+    "🇰🇷": {
+        "sidebar_title": "설정",
+        "setting_mgr": "💾 설정 키 관리",
+        "btn_gen_key": "키 생성",
+        "btn_load_key": "키 적용",
+        "key_input_ph": "설정 키",
+        
+        "sec1_title": "1. 제품 정보",
+        "dim_label": "치수 (L,W,H)",
+        "dim_help": "예: 180, 120, 50 (쉼표 구분)",
+        "weight_label": "무게 (g)",
+        "rot_label": "회전",
+        
+        "sec2_title": "2. 입수 설정",
+        "stack_limit_label": "적재제한(단)",
         "max_box_label": "박스최대(g)",
-        "sec2_title": "2. 박스 규격 & 수량",
-        "box_type_label": "골판지 종류",
-        "min_qty": "최소입수",
-        "max_qty": "최대입수",
-        "sec3_title": "3. 파레트 규격",
-        "pl_l": "가로(L)",
-        "pl_w": "세로(W)",
-        "pl_h": "적재높이",
-        "pl_h_help": "파레트 바닥 높이를 제외한 순수 화물 적재 높이",
+        "qty_range_label": "수량 (최소~최대)",
+        "single_item_label": "단품(1개)",
+        
+        "sec3_title": "3. 외부 설정",
+        "box_thick_label": "박스 두께",
+        "pallet_dim_label": "파레트(L,W,H)",
+        "pallet_dim_help": "예: 1100, 1100, 1650",
+
         "btn_calc": "분석 시작",
-        "err_dim_fmt": "❌ 제품 치수 형식이 올바르지 않습니다.",
-        "success_msg": "✅ 분석 완료! Top {n} 옵션 도출",
-        "err_no_result": "❌ 조건에 맞는 박스 구성을 찾지 못했습니다.",
+        "err_dim_fmt": "❌ 치수 오류",
+        "success_msg": "✅ 분석 완료! ({n}건)",
+        "err_no_result": "❌ 결과 없음",
+        
         "res_title": "4. 추천 적재 옵션",
-        "opt_label": "옵션 선택:",
+        "opt_label": "옵션 선택",
         "rank": "순위",
         "warn": "[위험]",
         "qty_unit": "입",
-        "total_unit": "개",
+        "box_unit": "박스",
+        "total_label": "총 제품", 
         "eff": "효율",
+        
         "detail_title": "📊 상세 리포트",
-        "unsafe_msg": "🚫 **[비추천]** 강도 부족 (안전계수: {sf:.1f})",
-        "safe_msg": "✅ **[안전]** 강도 충분 (안전계수: {sf:.1f})",
+        "layout_title": "📐 적재 배열 (가로 x 세로 x 높이)",
+        "unsafe_msg": "🚫 **강도 부족** (SF: {sf})",
+        "safe_msg": "✅ **강도 안전** (SF: {sf})",
+        
         "t_cat": "구분",
         "t_dim": "치수 (mm)",
         "t_cont": "내용",
         "l_prod_in": "제품(입력)",
-        "l_prod_act": "제품(적재)",
-        "l_desc_act": "실제 적재 방향",
-        "l_box": "박스",
-        "l_load": "적재",
+        "l_prod_act": "제품(실제)",
+        "l_box": "박스 외측",
+        "l_load": "파레트 적재",
         "eff_label": "적재 효율",
         "load_bottom": "최하단 하중",
         "bct": "압축강도(BCT)",
-        "g_title": "하중 vs 강도",
-        "viewer_pallet_2d": "🏗️ 파레트: 1단 도면",
-        "viewer_pallet_3d": "🏗️ 파레트: 3D 뷰",
-        "viewer_box_2d": "📦 박스 내부: 1단 도면",
-        "viewer_box_3d": "📦 박스 내부: 3D 뷰",
+        
+        "res_box_qty": "박스 당 입수",
+        "res_total_box": "총 박스 수량",
+        "res_total_prod": "파레트 총 입수",
+        "layout_in_box": "박스 내부 적재",
+        "layout_on_pallet": "파레트 위 적재",
+        
+        "chart_load_title": "층별 하중 분포 (Load per Layer)",
+        "g_title": "최하단 압축 하중 vs 박스 강도",
+        
+        "viewer_pallet_2d": "🏗️ 파레트 (2D)",
+        "viewer_pallet_3d": "🏗️ 파레트 (3D)",
+        "viewer_box_2d": "📦 박스 내부 (2D)",
+        "viewer_box_3d": "📦 박스 내부 (3D)",
+        
         "box_types": ["A골 (5mm)", "B골 (3mm)", "AB골 (8mm)"],
         "pat_no_int": "No Interlock",
         "pat_pat_rot": "Pattern Rotation",
         "pat_box_rot": "Box Rotation",
         "pat_pinwheel": "Pinwheel",
-        "pat_expanded": "Expanded Pinwheel"
+        "pat_expanded": "Expanded Pinwheel",
+        
+        "btn_gen_pdf": "📄 리포트 생성 (PDF)",
+        "btn_down_pdf": "📥 PDF 다운로드",
+        "pdf_title": "Pallet Simulation Report",
+        "pdf_summary": "1. 시뮬레이션 요약",
+        "pdf_perf": "2. 성능 지표",
+        "pdf_vis": "3. 시뮬레이션 시각화",
+        "msg_font_missing": "⚠️ 한글 폰트 미설치 (영문 출력)",
+        "footer_text": "Generated by Sparkpetkorea Co., LTD"
     },
-    "English": {
+    "🇺🇸": {
         "sidebar_title": "Settings",
-        "sec1_title": "1. Product & Weight",
-        "dim_label": "Dimensions (e.g. 180*120*50)",
-        "dim_help": "Enter L, W, H separated by *, x, space, or comma.",
-        "rot_label": "Allow Rotation (Swap L,W,H)",
-        "weight_label": "Unit Wgt(g)",
-        "max_box_label": "Box Max(g)",
-        "sec2_title": "2. Box Spec & Qty",
-        "box_type_label": "Cardboard Type",
-        "min_qty": "Min Qty",
-        "max_qty": "Max Qty",
-        "sec3_title": "3. Pallet Spec",
-        "pl_l": "Length(L)",
-        "pl_w": "Width(W)",
-        "pl_h": "Load Height",
-        "pl_h_help": "Max load height excluding pallet base height",
-        "btn_calc": "Start Analysis",
-        "err_dim_fmt": "❌ Invalid dimension format.",
-        "success_msg": "✅ Done! Top {n} options found",
-        "err_no_result": "❌ No valid configuration found.",
-        "res_title": "4. Recommended Options",
-        "opt_label": "Select Option:",
+        "setting_mgr": "💾 Config Key",
+        "btn_gen_key": "Gen Key",
+        "btn_load_key": "Load Key",
+        "key_input_ph": "Paste Key",
+        
+        "sec1_title": "1. Product Info",
+        "dim_label": "Dims (L,W,H)",
+        "dim_help": "e.g. 180, 120, 50",
+        "weight_label": "Wgt (g)",
+        "rot_label": "Rotate",
+        
+        "sec2_title": "2. Qty Settings",
+        "stack_limit_label": "StackLimit",
+        "max_box_label": "BoxMax(g)",
+        "qty_range_label": "Qty (Min~Max)",
+        "single_item_label": "Single(1ea)",
+        
+        "sec3_title": "3. External",
+        "box_thick_label": "Thickness",
+        "pallet_dim_label": "Pallet(L,W,H)",
+        "pallet_dim_help": "e.g. 1100, 1100, 1650",
+
+        "btn_calc": "Analyze",
+        "err_dim_fmt": "❌ Invalid Dims",
+        "success_msg": "✅ Done! ({n} opts)",
+        "err_no_result": "❌ No Result",
+        
+        "res_title": "4. Options",
+        "opt_label": "Select Option",
         "rank": "Rank",
         "warn": "[Unsafe]",
-        "qty_unit": "ea/box",
-        "total_unit": "total",
+        "qty_unit": "ea",
+        "box_unit": "boxes",
+        "total_label": "Total", 
         "eff": "Eff",
-        "detail_title": "📊 Detailed Report",
-        "unsafe_msg": "🚫 **[Unsafe]** Insufficient Strength (SF: {sf:.1f})",
-        "safe_msg": "✅ **[Safe]** Sufficient Strength (SF: {sf:.1f})",
+        
+        "detail_title": "📊 Report",
+        "layout_title": "📐 Layout (L x W x H)",
+        "unsafe_msg": "🚫 **Unsafe** (SF: {sf})",
+        "safe_msg": "✅ **Safe** (SF: {sf})",
+        
         "t_cat": "Category",
-        "t_dim": "Dim (mm)",
+        "t_dim": "Dims (mm)",
         "t_cont": "Content",
-        "l_prod_in": "Prod(Input)",
-        "l_prod_act": "Prod(Actual)",
-        "l_desc_act": "Actual Orientation",
-        "l_box": "Box (Outer)",
+        "l_prod_in": "Prod(In)",
+        "l_prod_act": "Prod(Act)",
+        "l_box": "Box(Out)",
         "l_load": "Pallet Load",
         "eff_label": "Efficiency",
         "load_bottom": "Bottom Load",
-        "bct": "Box Strength(BCT)",
-        "g_title": "Load vs Strength",
-        "viewer_pallet_2d": "🏗️ Pallet: Layer View (2D)",
-        "viewer_pallet_3d": "🏗️ Pallet: 3D View",
-        "viewer_box_2d": "📦 Inside Box: Layer View (2D)",
-        "viewer_box_3d": "📦 Inside Box: 3D View",
+        "bct": "Box BCT",
+        
+        "res_box_qty": "Qty per Box",
+        "res_total_box": "Total Boxes",
+        "res_total_prod": "Total Products",
+        "layout_in_box": "Inside Box",
+        "layout_on_pallet": "On Pallet",
+        
+        "chart_load_title": "Load Distribution per Layer",
+        "g_title": "Bottom Load vs Box Strength",
+        
+        "viewer_pallet_2d": "🏗️ Pallet (2D)",
+        "viewer_pallet_3d": "🏗️ Pallet (3D)",
+        "viewer_box_2d": "📦 Inside (2D)",
+        "viewer_box_3d": "📦 Inside (3D)",
+        
         "box_types": ["A-Flute (5mm)", "B-Flute (3mm)", "AB-Flute (8mm)"],
         "pat_no_int": "No Interlock",
         "pat_pat_rot": "Pattern Rotation",
         "pat_box_rot": "Box Rotation",
         "pat_pinwheel": "Pinwheel",
-        "pat_expanded": "Expanded Pinwheel"
+        "pat_expanded": "Expanded Pinwheel",
+        
+        "btn_gen_pdf": "📄 Generate PDF Report",
+        "btn_down_pdf": "📥 Download PDF",
+        "pdf_title": "Pallet Simulation Report",
+        "pdf_summary": "1. Summary",
+        "pdf_perf": "2. Performance",
+        "pdf_vis": "3. Visualization",
+        "msg_font_missing": "",
+        "footer_text": "Generated by Sparkpetkorea Co., LTD"
     }
 }
 
@@ -124,7 +188,7 @@ TRANSLATIONS = {
 # ==========================================
 def parse_dimensions(dim_str):
     try:
-        cleaned = re.sub(r'[^\d.]+', ',', dim_str)
+        cleaned = re.sub(r'[^\d.]+', ',', str(dim_str))
         parts = [float(x) for x in cleaned.split(',') if x.strip()]
         if len(parts) == 3:
             return [int(p) for p in parts]
@@ -132,8 +196,130 @@ def parse_dimensions(dim_str):
     except:
         return None
 
+def fmt(num):
+    if num is None: return ""
+    try:
+        val = float(num)
+        if val.is_integer():
+            return "{:,}".format(int(val))
+        return "{:,.2f}".format(val).rstrip('0').rstrip('.')
+    except:
+        return str(num)
+
+class PDFWithFooter(FPDF):
+    def footer(self):
+        self.set_y(-15)
+        try:
+            self.set_font('KoreanFont', '', 8)
+        except:
+            self.set_font("Arial", "I", 8)
+        self.cell(0, 10, "Generated by Sparkpetkorea Co., LTD", 0, 0, 'C')
+
+def create_pdf_report(res, p_dims_input, pallet_dims, weight_val, lang_code, figures):
+    t = TRANSLATIONS[lang_code]
+    pdf = PDFWithFooter()
+    pdf.add_page()
+    
+    font_path = None
+    possible_fonts = ["NanumGothic.ttf", "Malgun.ttf", "AppleGothic.ttf"] 
+    for font in possible_fonts:
+        if os.path.exists(font):
+            font_path = font
+            break
+            
+    use_korean = False
+    if font_path and lang_code == "🇰🇷":
+        pdf.add_font('KoreanFont', '', font_path, uni=True)
+        use_korean = True
+        pdf.set_font('KoreanFont', '', 10)
+    else:
+        pdf.set_font("Arial", '', 10)
+        if lang_code == "🇰🇷":
+            t = TRANSLATIONS["🇺🇸"]
+
+    def cell_kv(k, v):
+        if use_korean: pdf.set_font('KoreanFont', '', 10)
+        else: pdf.set_font('Arial', '', 10)
+        pdf.cell(50, 8, str(k), border=1)
+        pdf.cell(140, 8, str(v), border=1, ln=True)
+
+    if use_korean: pdf.set_font('KoreanFont', 'B', 16)
+    else: pdf.set_font('Arial', 'B', 16)
+    
+    pdf.cell(200, 10, txt=t['pdf_title'], ln=True, align='C')
+    pdf.ln(10)
+    
+    if use_korean: pdf.set_font('KoreanFont', 'B', 12)
+    else: pdf.set_font('Arial', 'B', 12)
+    pdf.cell(200, 10, txt=t['pdf_summary'], ln=True)
+    
+    p_l, p_w, p_h = p_dims_input
+    used_dims = res.get('prod_dims_used', p_dims_input)
+    b_l, b_w, b_h = res['box_outer']
+    l_l, l_w, l_h = res['load_dims']
+    
+    cell_kv(t['l_prod_in'], f"{fmt(p_l)} x {fmt(p_w)} x {fmt(p_h)} mm ({fmt(weight_val)}g)")
+    cell_kv(t['l_prod_act'], f"{fmt(used_dims[0])} x {fmt(used_dims[1])} x {fmt(used_dims[2])} mm")
+    cell_kv(t['l_box'], f"{fmt(b_l)} x {fmt(b_w)} x {fmt(b_h)} mm")
+    cell_kv(t['l_load'], f"{fmt(l_l)} x {fmt(l_w)} x {fmt(l_h)} mm")
+    pdf.ln(5)
+    
+    if use_korean: pdf.set_font('KoreanFont', 'B', 12)
+    else: pdf.set_font('Arial', 'B', 12)
+    pdf.cell(200, 10, txt=t['pdf_perf'], ln=True)
+    
+    pat_name = t[res['interlock_desc_key']]
+    if res.get('pinwheel_k', 0) > 1: pat_name += f" ({res['pinwheel_k']}-Layer)"
+    
+    cell_kv("Pattern", pat_name)
+    cell_kv("Quantity", f"{res['qty']} {t['qty_unit'].split('/')[0]} / Total: {fmt(res['total'])}")
+    cell_kv("Efficiency", f"{res['efficiency']:.1f}%")
+    cell_kv("Total Boxes", f"{res['total_boxes']} boxes")
+    cell_kv("Layers", f"{res['p_layers']}")
+    cell_kv("Safety Factor", f"{res['strength']['sf']:.2f}")
+    cell_kv("Box BCT", f"{fmt(res['strength']['bct'])} kgf")
+    pdf.ln(5)
+
+    if use_korean: pdf.set_font('KoreanFont', 'B', 12)
+    else: pdf.set_font('Arial', 'B', 12)
+    pdf.cell(200, 10, txt=t['pdf_vis'], ln=True)
+    
+    try:
+        y_pos = pdf.get_y()
+        for i, fig in enumerate(figures):
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                try:
+                    fig.write_image(tmp.name, width=500, height=350)
+                    x_pos = 10 if i % 2 == 0 else 110
+                    if i % 2 == 0 and i > 0: 
+                        y_pos += 70
+                        if y_pos > 240: 
+                            pdf.add_page()
+                            y_pos = 20
+                    pdf.image(tmp.name, x=x_pos, y=y_pos, w=90)
+                except Exception:
+                    pdf.set_font('Arial', '', 8)
+                    pdf.cell(90, 10, "[Image Error: Install 'kaleido']", border=1, ln=(i%2))
+                finally:
+                    tmp.close()
+                    try: os.unlink(tmp.name)
+                    except: pass
+    except Exception as e:
+        pdf.ln(5)
+        pdf.cell(200, 10, txt=f"Vis Error: {str(e)}", ln=True)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+        pdf.output(tmp_pdf.name)
+        tmp_pdf_path = tmp_pdf.name
+
+    with open(tmp_pdf_path, "rb") as f:
+        pdf_bytes = f.read()
+
+    os.remove(tmp_pdf_path)
+    return pdf_bytes, (not use_korean and lang_code=="🇰🇷")
+
 # ==========================================
-# 2. 계산 로직 (Core Logic)
+# 2. 계산 로직
 # ==========================================
 class PalletLogic:
     def __init__(self):
@@ -145,8 +331,7 @@ class PalletLogic:
 
     def check_pinwheel_layers(self, box_l, box_w, pallet_l):
         remaining_space = pallet_l - box_l
-        if remaining_space < box_w:
-            return 0
+        if remaining_space < box_w: return 0
         return int(remaining_space // box_w)
 
     def calculate_bct(self, length, width, fl_idx):
@@ -159,176 +344,167 @@ class PalletLogic:
         bct_kgf = bct_newton / 9.80665 * 1000 
         return bct_kgf 
 
-    def find_candidates(self, p_dims_input, p_weight_g, max_box_w_g, box_type_idx, box_margin, min_qty, max_qty, pallet_dims, allow_rotation):
+    def find_candidates(self, p_dims_input, p_weight_g, max_box_w_g, box_type_idx, box_margin, min_qty, max_qty, pallet_dims, allow_rotation, stack_limit):
         pl_L, pl_W, pl_H = pallet_dims
-        
         if max_box_w_g <= 0: max_box_w_g = 999999
         if p_weight_g <= 0: p_weight_g = 1
-        
         limit_qty_by_weight = int(max_box_w_g / p_weight_g)
         
         candidates = []
         seen_configs = set()
-
+        
         raw_d1, raw_d2, raw_d3 = p_dims_input
         prod_orientations = [(raw_d1, raw_d2, raw_d3)]
-        
         if allow_rotation:
             perms = set(itertools.permutations([raw_d1, raw_d2, raw_d3]))
             prod_orientations = list(perms)
 
         for (p_L, p_W, p_H) in prod_orientations:
-            for div_x in range(2, 7):
-                for div_y in range(2, 7):
-                    grid_l = int(pl_L / div_x)
-                    grid_w = int(pl_W / div_y)
-                    limit_in_l = grid_l - box_margin
-                    limit_in_w = grid_w - box_margin
+            usable_pl_L = pl_L
+            usable_pl_W = pl_W
+            box_types_orientations = [(p_L, p_W), (p_W, p_L)]
 
-                    if limit_in_l < min(p_L, p_W) or limit_in_w < min(p_L, p_W): continue
-
-                    orientations_inside = [(p_L, p_W), (p_W, p_L)]
-                    for d1, d2 in orientations_inside:
-                        max_c = limit_in_l // d1
-                        max_r = limit_in_w // d2
-                        if max_c * max_r == 0: continue
+            for d1, d2 in box_types_orientations:
+                max_c_prod = usable_pl_L // d1
+                max_r_prod = usable_pl_W // d2
+                
+                for c in range(1, int(max_c_prod) + 1):
+                    for r in range(1, int(max_r_prod) + 1):
+                        req_in_l = c * d1
+                        req_in_w = r * d2
+                        out_l = req_in_l + box_margin
+                        out_w = req_in_w + box_margin
                         
-                        search_range_c = range(max_c, max(0, max_c - 3), -1)
-                        search_range_r = range(max_r, max(0, max_r - 3), -1)
+                        if out_l > usable_pl_L and out_l > usable_pl_W: continue
+                        if out_w > usable_pl_L and out_w > usable_pl_W: continue
                         
-                        for c in search_range_c:
-                            for r in search_range_r:
-                                if c * r == 0: continue
-                                req_in_l = c * d1
-                                req_in_w = r * d2
-                                out_l = req_in_l + box_margin
-                                out_w = req_in_w + box_margin
-                                
-                                long_side = max(out_l, out_w)
-                                short_side = min(out_l, out_w)
-                                if short_side > 0 and (long_side / short_side) > 3.0: continue
-                                
-                                max_stable_height = long_side * 0.6
-                                avail_prod_h = max_stable_height - box_margin
-                                geo_max_layers = int(avail_prod_h // p_H)
-                                if geo_max_layers < 1:
-                                    if (p_H + box_margin) <= long_side: geo_max_layers = 1
-                                    else: continue
-                                
-                                weight_max_layers = limit_qty_by_weight // (c * r)
-                                user_max_layers = max_qty // (c * r)
-                                safe_layers = min(weight_max_layers, geo_max_layers, user_max_layers)
-                                if safe_layers == 0: continue
-                                
-                                qty = (c * r) * safe_layers
-                                if qty < min_qty: continue
+                        long_side = max(out_l, out_w)
+                        short_side = min(out_l, out_w)
+                        if short_side > 0 and (long_side / short_side) > 3.5: continue
 
-                                req_in_h = safe_layers * p_H
-                                out_h = req_in_h + box_margin 
-
-                                if out_h > grid_l + 5 and out_h > grid_w + 5: continue
-                                p_layers = int(pl_H // out_h)
-                                if p_layers < 1: continue
-
-                                box_weight_kg = (qty * p_weight_g) / 1000.0
-                                bct_val = self.calculate_bct(out_l, out_w, box_type_idx)
-                                stack_load = box_weight_kg * (p_layers - 1)
-                                if stack_load <= 0: stack_load = 0.1
-                                sf = bct_val / stack_load
-                                is_unsafe = sf < 3.0
-                                
-                                grid_yield = div_x * div_y
-                                layer_total_l = div_x * out_l
-                                layer_total_w = div_y * out_w
-                                is_perfect_square = abs(layer_total_l - layer_total_w) <= 20
-                                
-                                desc_key = 'pat_no_int'
-                                if is_perfect_square:
-                                    if div_x != div_y: desc_key = 'pat_pat_rot'
-                                    elif abs(out_l - out_w) <= 5: desc_key = 'pat_box_rot'
-                                
-                                if 'rot' in desc_key:
-                                    load_l = max(layer_total_l, layer_total_w)
-                                    load_w = load_l
-                                else:
-                                    load_l = layer_total_l
-                                    load_w = layer_total_w
-
-                                total = grid_yield * p_layers * qty
-                                eff = (out_l * out_w * grid_yield) / (pl_L * pl_W) * 100
-                                
-                                score = total
-                                if 'rot' in desc_key: score += 15
-                                if is_unsafe: score -= 500
-                                
-                                config_key = (out_l, out_w, out_h, desc_key, qty, grid_yield, p_L, p_W, p_H)
-                                if config_key not in seen_configs:
-                                    candidates.append({
-                                        'qty': qty, 
-                                        'pattern_type': 'grid',
-                                        'pattern_dims': (div_x, div_y),
-                                        'box_outer': (out_l, out_w, out_h),
-                                        'box_inner': (req_in_l, req_in_w, req_in_h),
-                                        'prod_detail': (d1, d2, p_H, c, r, safe_layers),
-                                        'prod_dims_used': (p_L, p_W, p_H),
-                                        'yield_per_layer': grid_yield,
-                                        'total': total, 
-                                        'interlock_desc_key': desc_key,
-                                        'weight': box_weight_kg,
-                                        'score': score,
-                                        'p_layers': p_layers,
-                                        'efficiency': eff,
-                                        'pinwheel_k': 0,
-                                        'load_dims': (load_l, load_w, p_layers * out_h),
-                                        'pallet_dims': pallet_dims,
-                                        'strength': {'bct': bct_val, 'load': stack_load, 'sf': sf, 'unsafe': is_unsafe}
-                                    })
-                                    seen_configs.add(config_key)
-
-                                if c == max_c and r == max_r:
-                                    pw_k = self.check_pinwheel_layers(out_l, out_w, pl_L)
-                                    if pw_k > 0:
-                                        pat_type_pw = 'pinwheel'
-                                        pinwheel_yield = 4 * pw_k
-                                        desc_key_pw = 'pat_pinwheel'
-                                        if pw_k > 1: desc_key_pw = 'pat_expanded'
-                                        
-                                        total_pw = pinwheel_yield * p_layers * qty
-                                        eff_pw = (out_l * out_w * pinwheel_yield) / (pl_L * pl_W) * 100
-                                        score_pw = total_pw + 20
-                                        if is_unsafe: score_pw -= 500
-                                        pw_size = out_l + (pw_k * out_w)
-                                        
-                                        config_key_pw = (out_l, out_w, out_h, desc_key_pw, qty, pinwheel_yield, p_L, p_W, p_H)
-                                        if config_key_pw not in seen_configs:
-                                            candidates.append({
-                                                'qty': qty,
-                                                'pattern_type': pat_type_pw,
-                                                'pattern_dims': (div_x, div_y),
-                                                'box_outer': (out_l, out_w, out_h),
-                                                'box_inner': (req_in_l, req_in_w, req_in_h),
-                                                'prod_detail': (d1, d2, p_H, c, r, safe_layers),
-                                                'prod_dims_used': (p_L, p_W, p_H),
-                                                'yield_per_layer': pinwheel_yield,
-                                                'total': total_pw,
-                                                'interlock_desc_key': desc_key_pw,
-                                                'weight': box_weight_kg,
-                                                'score': score_pw,
-                                                'p_layers': p_layers,
-                                                'efficiency': eff_pw,
-                                                'pinwheel_k': pw_k,
-                                                'load_dims': (pw_size, pw_size, p_layers * out_h),
-                                                'pallet_dims': pallet_dims,
-                                                'strength': {'bct': bct_val, 'load': stack_load, 'sf': sf, 'unsafe': is_unsafe}
-                                            })
-                                            seen_configs.add(config_key_pw)
+                        max_stable_height = long_side * 0.7 if long_side > 0 else 9999
+                        avail_prod_h = max_stable_height - box_margin
+                        geo_max_layers = max(1, int(avail_prod_h // p_H))
+                        
+                        weight_max_layers = limit_qty_by_weight // (c * r)
+                        user_max_layers = max_qty // (c * r)
+                        safe_layers = min(weight_max_layers, geo_max_layers, user_max_layers, stack_limit)
+                        
+                        if safe_layers < 1: continue
+                        qty = (c * r) * safe_layers
+                        if qty < min_qty: continue
+                        
+                        out_h = (safe_layers * p_H) + box_margin
+                        p_layers = int(pl_H // out_h)
+                        if p_layers < 1: continue
+                        
+                        box_weight_kg = (qty * p_weight_g) / 1000.0
+                        bct_val = self.calculate_bct(out_l, out_w, box_type_idx)
+                        stack_load = box_weight_kg * (p_layers - 1)
+                        if stack_load <= 0: stack_load = 0.1
+                        sf = bct_val / stack_load
+                        is_unsafe = sf < 3.0
+                        
+                        pack_layout = (d1, d2, p_H, c, r, safe_layers)
+                        req_in_h = safe_layers * p_H
+                        box_inner_dims = (req_in_l, req_in_w, req_in_h)
+                        
+                        self._solve_grid(candidates, seen_configs, out_l, out_w, out_h, 
+                                         usable_pl_L, usable_pl_W, p_layers, qty, box_weight_kg,
+                                         bct_val, stack_load, sf, is_unsafe,
+                                         pack_layout, (p_L, p_W, p_H), pallet_dims, box_inner_dims)
+                        
+                        self._solve_pinwheel(candidates, seen_configs, out_l, out_w, out_h, 
+                                             usable_pl_L, usable_pl_W, p_layers, qty, box_weight_kg,
+                                             bct_val, stack_load, sf, is_unsafe,
+                                             pack_layout, (p_L, p_W, p_H), pallet_dims, box_inner_dims)
 
         if not candidates: return []
         candidates.sort(key=lambda x: x['score'], reverse=True)
         return candidates[:12]
 
+    def _solve_grid(self, candidates, seen_configs, out_l, out_w, out_h, pl_L, pl_W, p_layers, qty, w_kg, bct, load, sf, unsafe, pack_layout, prod_dims, pallet_dims, box_inner):
+        orientations = [(out_l, out_w), (out_w, out_l)]
+        for (L_box, W_box) in orientations:
+            nx = int(pl_L // L_box)
+            ny = int(pl_W // W_box)
+            if nx * ny == 0: continue
+            
+            yield_per_layer = nx * ny
+            total = yield_per_layer * p_layers * qty
+            total_boxes = yield_per_layer * p_layers
+            eff = (out_l * out_w * yield_per_layer) / (pl_L * pl_W) * 100
+            
+            desc = "pat_no_int"
+            if nx == ny and abs(L_box - W_box) < 10: desc = "pat_box_rot"
+            
+            score = total
+            if unsafe: score -= 500
+            
+            box_sorted = tuple(sorted([out_l, out_w, out_h]))
+            config_key = (qty, total, desc, int(eff), box_sorted)
+            
+            if config_key not in seen_configs:
+                candidates.append({
+                    'qty': qty, 'pattern_type': 'grid', 'pattern_dims': (nx, ny),
+                    'box_outer': (out_l, out_w, out_h), 
+                    'box_inner': box_inner,
+                    'prod_detail': pack_layout,
+                    'prod_dims_used': prod_dims,
+                    'yield_per_layer': yield_per_layer, 'total': total, 
+                    'total_boxes': total_boxes,
+                    'interlock_desc_key': desc,
+                    'weight': w_kg, 'score': score, 'p_layers': p_layers,
+                    'efficiency': eff, 'pinwheel_k': 0, 
+                    'load_dims': (nx*L_box, ny*W_box, p_layers * out_h),
+                    'pallet_dims': pallet_dims, 'strength': {'bct': bct, 'load': load, 'sf': sf, 'unsafe': unsafe},
+                    'pack_layout': (pack_layout[3], pack_layout[4], pack_layout[5]), 
+                    'pallet_layout': (nx, ny, p_layers),
+                    'opt_orient': (L_box, W_box)
+                })
+                seen_configs.add(config_key)
+
+    def _solve_pinwheel(self, candidates, seen_configs, out_l, out_w, out_h, pl_L, pl_W, p_layers, qty, w_kg, bct, load, sf, unsafe, pack_layout, prod_dims, pallet_dims, box_inner):
+        box_orients = [(out_l, out_w), (out_w, out_l)]
+        for (L_box, W_box) in box_orients:
+            max_k = int(L_box // W_box) + 2
+            for k in range(1, max_k + 2):
+                block_size = L_box + (k * W_box)
+                if block_size <= min(pl_L, pl_W):
+                    yield_per_layer = 4 * k
+                    total = yield_per_layer * p_layers * qty
+                    total_boxes = yield_per_layer * p_layers
+                    eff = (out_l * out_w * yield_per_layer) / (pl_L * pl_W) * 100
+                    
+                    desc = "pat_pinwheel" if k == 1 else "pat_expanded"
+                    score = total + 20 
+                    if unsafe: score -= 500
+                    
+                    box_sorted = tuple(sorted([out_l, out_w, out_h]))
+                    config_key = (qty, total, desc, int(eff), box_sorted)
+                    
+                    if config_key not in seen_configs:
+                        candidates.append({
+                            'qty': qty, 'pattern_type': 'pinwheel', 'pattern_dims': (0, 0),
+                            'box_outer': (out_l, out_w, out_h), 
+                            'box_inner': box_inner,
+                            'prod_detail': pack_layout,
+                            'prod_dims_used': prod_dims,
+                            'yield_per_layer': yield_per_layer, 'total': total, 
+                            'total_boxes': total_boxes,
+                            'interlock_desc_key': desc,
+                            'weight': w_kg, 'score': score, 'p_layers': p_layers,
+                            'efficiency': eff, 'pinwheel_k': k, 
+                            'load_dims': (block_size, block_size, p_layers * out_h),
+                            'pallet_dims': pallet_dims, 'strength': {'bct': bct, 'load': load, 'sf': sf, 'unsafe': unsafe},
+                            'pack_layout': (pack_layout[3], pack_layout[4], pack_layout[5]), 
+                            'pallet_layout': (0, 0, p_layers),
+                            'opt_orient': (L_box, W_box)
+                        })
+                        seen_configs.add(config_key)
+
 # ==========================================
-# 3. 2D & 3D 시각화 함수
+# 3. 시각화 함수 (최상위)
 # ==========================================
 def create_cube_mesh(x, y, z, dx, dy, dz, color, opacity=1.0):
     x_pts = [x, x+dx, x+dx, x, x, x+dx, x+dx, x]
@@ -345,25 +521,25 @@ def draw_wireframe(x, y, z, dx, dy, dz):
     ze = [z, z, z, z, z, None, z+dz, z+dz, z+dz, z+dz, z+dz, None, z, z+dz, None, z, z+dz, None, z, z+dz]
     return go.Scatter3d(x=xe, y=ye, z=ze, mode='lines', line=dict(color='black', width=2), showlegend=False, hoverinfo='skip')
 
-# --- Pallet 2D ---
 def get_pallet_2d_fig(res, pl_L, pl_W):
     fig = go.Figure()
     fig.add_shape(type="rect", x0=0, y0=0, x1=pl_L, y1=pl_W, line=dict(color="black", width=3))
     
-    L, W, H = res['box_outer']
-    rects = []
+    L, W = res['opt_orient']
     
+    rects = []
     if res['pattern_type'] == 'pinwheel':
         k = res['pinwheel_k']
         total_span = L + (k * W)
         off_x = (pl_L - total_span) / 2
         off_y = (pl_W - total_span) / 2
+        
         for i in range(k):
-            # 2D 뷰는 짝수층(Standard Layer) 기준으로 보여줌
-            rects.append((off_x, off_y + (i * W), L, W))
-            rects.append((off_x + L + (i * W), off_y, W, L))
-            rects.append((off_x + (k * W), off_y + L + (i * W), L, W))
-            rects.append((off_x + (i * W), off_y + (k * W), W, L))
+            rects.append((off_x, off_y + i*W, L, W))
+            rects.append((off_x + L + i*W, off_y, W, L))
+            rects.append((off_x + k*W, off_y + L + i*W, L, W))
+            rects.append((off_x + i*W, off_y + k*W, W, L))
+            
     else:
         dx, dy = res['pattern_dims']
         total_w = dx * L
@@ -377,130 +553,100 @@ def get_pallet_2d_fig(res, pl_L, pl_W):
                 rects.append((bx, by, L, W))
     
     for i, (rx, ry, rdx, rdy) in enumerate(rects):
-        fig.add_trace(go.Scatter(
-            x=[rx, rx+rdx, rx+rdx, rx, rx], y=[ry, ry, ry+rdy, ry+rdy, ry],
-            fill="toself", fillcolor="#85C1E9", line=dict(color="blue", width=1),
-            mode='lines+text', text=str(i+1), textposition="middle center",
-            showlegend=False, hoverinfo='text', hovertext=f"Box {i+1}"
-        ))
-
-    fig.update_layout(
-        xaxis=dict(range=[-50, pl_L+50], showgrid=False, zeroline=False, visible=True),
-        yaxis=dict(range=[-50, pl_W+50], showgrid=False, zeroline=False, visible=True, scaleanchor="x", scaleratio=1),
-        margin=dict(l=20, r=20, b=20, t=20), height=350, plot_bgcolor="white"
-    )
+        fig.add_trace(go.Scatter(x=[rx, rx+rdx, rx+rdx, rx, rx], y=[ry, ry, ry+rdy, ry+rdy, ry], fill="toself", fillcolor="#85C1E9", line=dict(color="blue", width=1), mode='lines+text', text=str(i+1), textposition="middle center", showlegend=False, hoverinfo='text', hovertext=f"Box {i+1}"))
+    
+    fig.update_layout(xaxis=dict(range=[-50, pl_L+50], showgrid=False, zeroline=False, visible=True), yaxis=dict(range=[-50, pl_W+50], showgrid=False, zeroline=False, visible=True, scaleanchor="x", scaleratio=1), margin=dict(l=20, r=20, b=20, t=20), height=350, plot_bgcolor="white")
     return fig
 
-# --- Pallet 3D ---
 def get_pallet_3d_fig(res, pl_L, pl_W):
     fig = go.Figure()
-    L, W, H = res['box_outer']
+    L, W = res['opt_orient']
+    H = res['box_outer'][2]
+    
     layers = res['p_layers']
     fig.add_trace(draw_wireframe(0, 0, 0, pl_L, pl_W, 0))
     c_blue, c_red = '#355C7D', '#C06C84'
     gap = 2
-
     for z in range(layers):
         cur_z = z * H
         is_odd = (z % 2 != 0)
         color = c_red if is_odd else c_blue
         boxes = []
-        
         if res['pattern_type'] == 'pinwheel':
             k = res['pinwheel_k']
             total_span = L + (k * W)
             off_x = (pl_L - total_span) / 2
             off_y = (pl_W - total_span) / 2
             
-            # [FIXED] 핀휠 좌표 계산 로직 완전 수정 (대각선 대칭)
-            # 기준(짝수층) 좌표 리스트 생성
-            even_layer_boxes = [] # (local_x, local_y, dx, dy)
+            layer_boxes = []
             for i in range(k):
-                # 1. Bottom (L x W)
-                even_layer_boxes.append((0, i*W, L, W))
-                # 2. Right (W x L)
-                even_layer_boxes.append((L + i*W, 0, W, L))
-                # 3. Top (L x W)
-                even_layer_boxes.append((k*W, L + i*W, L, W))
-                # 4. Left (W x L)
-                even_layer_boxes.append((i*W, k*W, W, L))
+                layer_boxes.append((off_x, off_y + i*W, L, W))
+                layer_boxes.append((off_x + L + i*W, off_y, W, L))
+                layer_boxes.append((off_x + k*W, off_y + L + i*W, L, W))
+                layer_boxes.append((off_x + i*W, off_y + k*W, W, L))
             
-            # 층에 따라 좌표 적용
-            for (lx, ly, dx, dy) in even_layer_boxes:
-                if not is_odd:
-                    # 짝수층: 그대로 적용
-                    boxes.append((off_x + lx, off_y + ly, cur_z, dx - gap, dy - gap, H - gap))
-                else:
-                    # 홀수층: x, y를 Swap (대각선 대칭)하여 완벽한 Interlock 구현
-                    # dx, dy도 Swap
-                    boxes.append((off_x + ly, off_y + lx, cur_z, dy - gap, dx - gap, H - gap))
+            if is_odd:
+                for (lx, ly, dl, dw) in layer_boxes:
+                    boxes.append((ly, lx, cur_z, dw-gap, dl-gap, H-gap))
+            else:
+                for (lx, ly, dl, dw) in layer_boxes:
+                    boxes.append((lx, ly, cur_z, dl-gap, dw-gap, H-gap))
                     
         else:
             dx, dy = res['pattern_dims']
-            is_perfect = 'rot' in res['interlock_desc_key']
-            do_rotate = (is_perfect and is_odd)
+            do_rotate = ('rot' in res['interlock_desc_key'] and is_odd)
             
-            cols, rows = (dy, dx) if do_rotate else (dx, dy)
-            box_l, box_w = (W, L) if do_rotate else (L, W)
-            
-            total_w = cols * box_l
-            total_h = rows * box_w
-            start_x = (pl_L - total_w) / 2
-            start_y = (pl_W - total_h) / 2
-            
-            for r in range(rows):
-                for c in range(cols):
-                    bx = start_x + c * box_l
-                    by = start_y + r * box_w
-                    boxes.append((bx, by, cur_z, box_l-gap, box_w-gap, H-gap))
-
+            if do_rotate:
+                total_w = dy * W 
+                total_h = dx * L
+                start_x = (pl_L - total_w) / 2
+                start_y = (pl_W - total_h) / 2
+                
+                for r in range(dx):
+                    for c in range(dy):
+                        bx = start_x + c * W
+                        by = start_y + r * L
+                        boxes.append((bx, by, cur_z, W-gap, L-gap, H-gap))
+            else:
+                total_w = dx * L
+                total_h = dy * W
+                start_x = (pl_L - total_w) / 2
+                start_y = (pl_W - total_h) / 2
+                for r in range(dy):
+                    for c in range(dx):
+                        bx = start_x + c * L
+                        by = start_y + r * W
+                        boxes.append((bx, by, cur_z, L-gap, W-gap, H-gap))
+                        
         for (bx, by, bz, bdx, bdy, bdz) in boxes:
             fig.add_trace(create_cube_mesh(bx, by, bz, bdx, bdy, bdz, color))
             fig.add_trace(draw_wireframe(bx, by, bz, bdx, bdy, bdz))
-
+            
     camera = dict(eye=dict(x=1.5, y=1.5, z=1.5))
     fig.update_layout(height=350, showlegend=False, scene=dict(aspectmode='data', camera=camera), margin=dict(l=0, r=0, b=0, t=0))
     return fig
 
-# --- Product 2D (Inside Box) ---
 def get_prod_layer_2d_fig(res):
     fig = go.Figure()
     p_d1, p_d2, p_d3, n_c, n_r, n_l = res['prod_detail']
     in_L, in_W, in_H = res['box_inner']
     
-    # 박스 내부 테두리
     fig.add_shape(type="rect", x0=0, y0=0, x1=in_L, y1=in_W, line=dict(color="black", width=3))
-    
     count = 0
     for r in range(n_r):
         for c in range(n_c):
             count += 1
             bx = c * p_d1
             by = r * p_d2
-            fig.add_trace(go.Scatter(
-                x=[bx, bx+p_d1, bx+p_d1, bx, bx],
-                y=[by, by, by+p_d2, by+p_d2, by],
-                fill="toself", fillcolor="#F9E79F", line=dict(color="orange", width=1),
-                mode='lines+text', text=str(count), textposition="middle center",
-                showlegend=False, hoverinfo='text', hovertext=f"Prod {count}"
-            ))
-            
-    fig.update_layout(
-        xaxis=dict(range=[-10, in_L+10], showgrid=False, zeroline=False, visible=True),
-        yaxis=dict(range=[-10, in_W+10], showgrid=False, zeroline=False, visible=True, scaleanchor="x", scaleratio=1),
-        margin=dict(l=20, r=20, b=20, t=20), height=350, plot_bgcolor="white"
-    )
+            fig.add_trace(go.Scatter(x=[bx, bx+p_d1, bx+p_d1, bx, bx], y=[by, by, by+p_d2, by+p_d2, by], fill="toself", fillcolor="#F9E79F", line=dict(color="orange", width=1), mode='lines+text', text=str(count), textposition="middle center", showlegend=False, hoverinfo='text', hovertext=f"Prod {count}"))
+    fig.update_layout(xaxis=dict(range=[-10, in_L+10], showgrid=False, zeroline=False, visible=True), yaxis=dict(range=[-10, in_W+10], showgrid=False, zeroline=False, visible=True, scaleanchor="x", scaleratio=1), margin=dict(l=20, r=20, b=20, t=20), height=350, plot_bgcolor="white")
     return fig
 
-# --- Product 3D (Inside Box) ---
 def get_prod_3d_fig(res):
     fig = go.Figure()
     p_d1, p_d2, p_d3, n_c, n_r, n_l = res['prod_detail']
     in_L, in_W, in_H = res['box_inner']
-    
-    # 박스 와이어프레임
     fig.add_trace(draw_wireframe(0, 0, 0, in_L, in_W, in_H))
-    
     for k in range(n_l):
         color = '#F5B7B1' if k % 2 == 0 else '#D2B4DE'
         for j in range(n_r):
@@ -510,51 +656,143 @@ def get_prod_3d_fig(res):
                 pz = k * p_d3
                 fig.add_trace(create_cube_mesh(px+0.5, py+0.5, pz+0.5, p_d1-1, p_d2-1, p_d3-1, color))
                 fig.add_trace(draw_wireframe(px+0.5, py+0.5, pz+0.5, p_d1-1, p_d2-1, p_d3-1))
-
     camera = dict(eye=dict(x=1.5, y=1.5, z=1.5))
     fig.update_layout(height=350, showlegend=False, scene=dict(aspectmode='data', camera=camera), margin=dict(l=0, r=0, b=0, t=0))
     return fig
 
 # ==========================================
-# 4. Streamlit UI
+# 4. Streamlit UI (Main)
 # ==========================================
 def main():
     st.set_page_config(page_title="Pallet Simulator", layout="wide")
     
+    # CSS for compact sidebar
+    st.markdown("""
+        <style>
+        [data-testid="stSidebar"] > div:first-child { padding-top: 10px; }
+        .st-emotion-cache-16idsys p { margin-bottom: 2px; font-size: 14px; }
+        .stNumberInput div[data-baseweb="input"] { height: 32px; }
+        .stSelectbox div[data-baseweb="select"] { height: 32px; }
+        hr { margin-top: 8px !important; margin-bottom: 8px !important; }
+        .stVerticalBlock > div { gap: 0.5rem; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Init Session
+    if 'dim_str' not in st.session_state: st.session_state.dim_str = "180,120,50"
+    if 'pl_str' not in st.session_state: st.session_state.pl_str = "1100,1100,1650"
+    if 'allow_rot' not in st.session_state: st.session_state.allow_rot = True
+    if 'w_val' not in st.session_state: st.session_state.w_val = 5.0
+    if 'max_w_val' not in st.session_state: st.session_state.max_w_val = 10000
+    if 'stack_limit' not in st.session_state: st.session_state.stack_limit = 6
+    if 'box_t_idx' not in st.session_state: st.session_state.box_t_idx = 0
+    if 'min_q' not in st.session_state: st.session_state.min_q = 10
+    if 'max_q' not in st.session_state: st.session_state.max_q = 100
+    if 'single_item' not in st.session_state: st.session_state.single_item = False
+
+    try:
+        st.session_state.w_val = float(st.session_state.w_val)
+        st.session_state.max_w_val = int(st.session_state.max_w_val)
+        st.session_state.stack_limit = int(st.session_state.stack_limit)
+        st.session_state.min_q = int(st.session_state.min_q)
+        st.session_state.max_q = int(st.session_state.max_q)
+    except: pass
+
+    # Clear old PDF cache
+    if 'pdf_data' not in st.session_state: st.session_state.pdf_data = None
+    if 'pdf_for' not in st.session_state: st.session_state.pdf_for = None
+
+    def clear_pdf_cache():
+        st.session_state.pdf_data = None
+        st.session_state.pdf_for = None
+
     with st.sidebar:
-        lang_code = st.selectbox("🌐 Language", ["Korean", "English"], index=0)
+        c_lang, c_key = st.columns([1, 2])
+        lang_code = c_lang.selectbox("Lang", ["🇰🇷", "🇺🇸"], index=0, label_visibility="collapsed")
         t = TRANSLATIONS[lang_code]
-
-    st.title(f"📦 Pallet Simulator - {lang_code}")
-    st.markdown("---")
-
-    with st.sidebar:
-        st.subheader(t['sec1_title'])
-        dims_str = st.text_input(t['dim_label'], value="180,120,50", help=t['dim_help'])
-        allow_rotation = st.checkbox(t['rot_label'], value=True)
         
-        c1, c2 = st.columns(2)
-        weight_val = c1.number_input(t['weight_label'], value=5.0)
-        max_box_w_g = c2.number_input(t['max_box_label'], value=10000.0)
+        with c_key.expander(t['setting_mgr']):
+            k1, k2 = st.columns(2)
+            if k1.button(t['btn_gen_key'], use_container_width=True):
+                data = {
+                    'd': st.session_state.dim_str, 'pl': st.session_state.pl_str,
+                    'ar': st.session_state.allow_rot, 'w': st.session_state.w_val, 
+                    'mw': st.session_state.max_w_val, 'sl': st.session_state.stack_limit,
+                    'bt': st.session_state.box_t_idx, 'nq': st.session_state.min_q,
+                    'xq': st.session_state.max_q, 'si': st.session_state.single_item
+                }
+                st.code(base64.b64encode(json.dumps(data).encode()).decode(), language="text")
+            
+            load_key = st.text_input("Key", placeholder=t['key_input_ph'], label_visibility="collapsed")
+            if k2.button(t['btn_load_key'], use_container_width=True):
+                try:
+                    b64_str = load_key.strip() + "=" * ((4 - len(load_key.strip()) % 4) % 4)
+                    data = json.loads(base64.b64decode(b64_str).decode())
+                    st.session_state.dim_str = data['d']
+                    st.session_state.pl_str = data.get('pl', "1100,1100,1650")
+                    st.session_state.allow_rot = data['ar']
+                    st.session_state.w_val = float(data['w'])
+                    st.session_state.max_w_val = int(data['mw'])
+                    st.session_state.stack_limit = int(data.get('sl', 6))
+                    st.session_state.box_t_idx = int(data['bt'])
+                    st.session_state.min_q = int(data['nq'])
+                    st.session_state.max_q = int(data['xq'])
+                    st.session_state.single_item = data.get('si', False)
+                    clear_pdf_cache()
+                    st.rerun()
+                except: st.error("Invalid")
 
-        st.subheader(t['sec2_title'])
-        box_type_label = st.selectbox(t['box_type_label'], t['box_types'])
-        box_type_idx = t['box_types'].index(box_type_label)
-        box_margins = [10, 14, 24]
-        margin_val = box_margins[box_type_idx]
+        st.divider()
         
-        c3, c4 = st.columns(2)
-        min_qty_val = c3.number_input(t['min_qty'], value=10, step=5)
-        max_qty_val = c4.number_input(t['max_qty'], value=100, step=5)
+        st.caption(t['sec1_title'])
+        c1, c2 = st.columns([2, 1])
+        c1.text_input(t['dim_label'], key="dim_str", help=t['dim_help'], on_change=clear_pdf_cache)
+        c2.number_input(t['weight_label'], key="w_val", format="%.1f", step=0.1, on_change=clear_pdf_cache)
+        st.checkbox(t['rot_label'], key="allow_rot", on_change=clear_pdf_cache)
 
-        st.subheader(t['sec3_title'])
-        c5, c6, c7 = st.columns(3)
-        pallet_l = c5.number_input(t['pl_l'], value=1100)
-        pallet_w = c6.number_input(t['pl_w'], value=1100)
-        pallet_h = c7.number_input(t['pl_h'], value=1650, help=t['pl_h_help'])
+        st.divider()
 
-        st.markdown("---")
-        btn_calc = st.button(t['btn_calc'], type="primary", use_container_width=True)
+        st.caption(t['sec2_title'])
+        r1_c1, r1_c2 = st.columns(2)
+        r1_c1.number_input(t['stack_limit_label'], key="stack_limit", step=1, format="%d", on_change=clear_pdf_cache)
+        r1_c2.number_input(t['max_box_label'], key="max_w_val", format="%d", step=100, on_change=clear_pdf_cache)
+        
+        st.caption(t['qty_range_label'])
+        if st.session_state.single_item:
+            q1, q2, q3 = st.columns([1, 0.2, 1])
+            q1.number_input("Min", value=1, disabled=True, label_visibility="collapsed")
+            q2.markdown("<div style='text-align:center; padding-top:5px'>~</div>", unsafe_allow_html=True)
+            q3.number_input("Max", value=1, disabled=True, label_visibility="collapsed")
+            st.session_state.min_q = 1
+            st.session_state.max_q = 1
+        else:
+            q1, q2, q3 = st.columns([1, 0.2, 1])
+            q1.number_input("Min", key="min_q", step=5, format="%d", label_visibility="collapsed", on_change=clear_pdf_cache)
+            q2.markdown("<div style='text-align:center; padding-top:5px'>~</div>", unsafe_allow_html=True)
+            q3.number_input("Max", key="max_q", step=5, format="%d", label_visibility="collapsed", on_change=clear_pdf_cache)
+            
+        st.checkbox(t['single_item_label'], key="single_item", on_change=clear_pdf_cache)
+
+        st.divider()
+
+        st.caption(t['sec3_title'])
+        box_labels = t['box_types']
+        safe_idx = st.session_state.box_t_idx if 0 <= st.session_state.box_t_idx < len(box_labels) else 0
+        def update_box_type():
+            st.session_state.box_t_idx = box_labels.index(st.session_state.box_type_select)
+            clear_pdf_cache()
+        
+        st.selectbox(t['box_thick_label'], box_labels, index=safe_idx, key="box_type_select", on_change=update_box_type)
+        margin_val = [10, 14, 24][st.session_state.box_t_idx]
+        
+        st.text_input(t['pallet_dim_label'], key="pl_str", help=t['pallet_dim_help'], on_change=clear_pdf_cache)
+
+        st.divider()
+        btn_calc = st.button(t['btn_calc'], type="primary", use_container_width=True, on_click=clear_pdf_cache)
+        
+        st.markdown("<br><div style='text-align: center; color: grey; font-size: 10px;'>Generated by Sparkpetkorea Co., LTD</div>", unsafe_allow_html=True)
+
+    st.title(f"📦 Pallet Simulator")
 
     if 'sim_results' not in st.session_state:
         st.session_state.sim_results = None
@@ -562,15 +800,18 @@ def main():
     sim = PalletLogic()
 
     if btn_calc:
-        p_dims = parse_dimensions(dims_str)
-        if not p_dims:
-            st.error(t['err_dim_fmt'])
+        p_dims = parse_dimensions(st.session_state.dim_str)
+        pl_dims_parsed = parse_dimensions(st.session_state.pl_str)
+        
+        if not p_dims: st.error(t['err_dim_fmt'])
+        elif not pl_dims_parsed: st.error("❌ Pallet Dim Error")
         else:
             try:
-                pallet_dims = (pallet_l, pallet_w, pallet_h)
                 candidates = sim.find_candidates(
-                    p_dims, weight_val, max_box_w_g, box_type_idx, margin_val, 
-                    min_qty_val, max_qty_val, pallet_dims, allow_rotation
+                    p_dims, st.session_state.w_val, st.session_state.max_w_val, 
+                    st.session_state.box_t_idx, margin_val, 
+                    st.session_state.min_q, st.session_state.max_q, 
+                    tuple(pl_dims_parsed), st.session_state.allow_rot, st.session_state.stack_limit
                 )
                 if candidates:
                     st.session_state.sim_results = candidates
@@ -582,80 +823,100 @@ def main():
                 st.error(f"Error: {e}")
 
     if st.session_state.sim_results:
-        st.header(t['res_title'])
-        results = st.session_state.sim_results
+        col_list, col_detail = st.columns([1, 1])
         
+        results = st.session_state.sim_results
         options = {}
         for idx, res in enumerate(results):
             pat_name = t[res['interlock_desc_key']]
-            if res.get('pinwheel_k', 0) > 1:
-                pat_name += f" ({res['pinwheel_k']}-Layer)"
-            warn = f" ⚠️{t['warn']}" if res['strength']['unsafe'] else ""
-            label = (f"{t['rank']} {idx+1}{warn}: {pat_name} "
-                     f"| {res['qty']}{t['qty_unit']} ({t['total_unit']} {res['total']}) "
-                     f"| {t['eff']} {res['efficiency']:.1f}%")
+            if res.get('pinwheel_k', 0) > 1: pat_name += f" ({res['pinwheel_k']}L)"
+            warn = f" {t['warn']}" if res['strength']['unsafe'] else ""
+            label = (f"Rank {idx+1}{warn}: {pat_name} | {res['qty']}{t['qty_unit']} "
+                     f"({t['box_unit']}: {res['total_boxes']}) "
+                     f"| {t['total_label']}: {fmt(res['total'])} | {res['efficiency']:.1f}%")
             options[label] = res
         
-        selected_label = st.radio(t['opt_label'], list(options.keys()), horizontal=False)
-        res = options[selected_label]
-        st_data = res['strength']
+        with col_list:
+            st.subheader(t['opt_label'])
+            selected_label = st.radio("Options", list(options.keys()), label_visibility="collapsed", on_change=clear_pdf_cache)
+            res = options[selected_label]
         
-        p_dims_input = parse_dimensions(dims_str)
+        st_data = res['strength']
+        p_dims_input = parse_dimensions(st.session_state.dim_str)
         used_dims = res.get('prod_dims_used', p_dims_input)
         b_l, b_w, b_h = res['box_outer']
         l_l, l_w, l_h = res['load_dims'] 
-        
-        st.markdown("---")
-        
-        st.subheader(t['detail_title'])
-        if st_data['unsafe']:
-            st.error(t['unsafe_msg'].format(sf=st_data['sf']))
-        else:
-            st.success(t['safe_msg'].format(sf=st_data['sf']))
+        pl_dims_parsed = parse_dimensions(st.session_state.pl_str)
 
-        c_info, c_gauge = st.columns([2, 1])
-        with c_info:
-            st.markdown(f"""
-            | {t['t_cat']} | {t['t_dim']} | {t['t_cont']} |
-            | :--- | :--- | :--- |
-            | **{t['l_prod_in']}** | {p_dims_input} | - |
-            | **{t['l_prod_act']}** | **{used_dims}** | **{t['l_desc_act']}** |
-            | **{t['l_box']}** | **{b_l} x {b_w} x {b_h}** | {res['qty']}{t['qty_unit']} / {res['weight']:.2f}kg |
-            | **{t['l_load']}** | {int(l_l)} x {int(l_w)} x {int(l_h)} | {res['p_layers']}L / {t['total_unit']} {res['total']} |
-            | **{t['eff_label']}** | **{res['efficiency']:.1f}%** | {t['bct']}: {st_data['bct']:.1f} kgf |
-            """)
-        with c_gauge:
-            fig_gauge = go.Figure(go.Indicator(
-                mode = "gauge+number+delta", value = st_data['load'],
-                domain = {'x': [0, 1], 'y': [0, 1]},
-                title = {'text': t['g_title'], 'font': {'size': 12}},
-                delta = {'reference': st_data['bct']/3, 'increasing': {'color': "red"}},
-                gauge = {
-                    'axis': {'range': [None, st_data['bct']], 'tickwidth': 1},
-                    'bar': {'color': "#2E86C1"},
-                    'steps': [{'range': [0, st_data['bct']/3], 'color': "#D4EFDF"}, {'range': [st_data['bct']/3, st_data['bct']], 'color': "#FADBD8"}],
-                    'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': st_data['bct']/3}
-                }
-            ))
-            fig_gauge.update_layout(height=180, margin=dict(l=20, r=20, t=30, b=0))
-            st.plotly_chart(fig_gauge, use_container_width=True)
+        pack_c, pack_r, pack_l = res['pack_layout']
+        pal_c, pal_r, pal_l = res['pallet_layout']
+        pal_layout_txt = f"{pal_c} x {pal_r} x {pal_l}" if pal_c > 0 else f"Pinwheel x {pal_l}"
 
-        st.markdown("---")
+        with col_detail:
+            r1_c1, r1_c2 = st.columns([3, 2])
+            r1_c1.subheader(t['detail_title'])
+            
+            with r1_c2:
+                current_pdf_id = f"{selected_label}_{lang_code}"
+                
+                if st.session_state.pdf_data and st.session_state.pdf_for == current_pdf_id:
+                    st.download_button(
+                        label=t['btn_down_pdf'],
+                        data=st.session_state.pdf_data,
+                        file_name="pallet_report.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                else:
+                    if st.button(t['btn_gen_pdf'], use_container_width=True):
+                        with st.spinner("Generating..."):
+                            fig_p2d = get_pallet_2d_fig(res, pl_dims_parsed[0], pl_dims_parsed[1])
+                            fig_p3d = get_pallet_3d_fig(res, pl_dims_parsed[0], pl_dims_parsed[1])
+                            fig_b2d = get_prod_layer_2d_fig(res)
+                            fig_b3d = get_prod_3d_fig(res)
+                            try:
+                                pdf_bytes, _ = create_pdf_report(
+                                    res, p_dims_input, pl_dims_parsed, 
+                                    st.session_state.w_val, lang_code, [fig_p2d, fig_p3d, fig_b2d, fig_b3d]
+                                )
+                                st.session_state.pdf_data = pdf_bytes
+                                st.session_state.pdf_for = current_pdf_id
+                                st.rerun()
+                            except Exception as e: st.error(f"Err: {e}")
+
+            if st_data['unsafe']: st.error(t['unsafe_msg'].format(sf=fmt(st_data['sf'])))
+            else: st.success(t['safe_msg'].format(sf=fmt(st_data['sf'])))
+
+            d_c1, d_c2 = st.columns([1.5, 1.2])
+            with d_c1:
+                st.markdown(f"""
+                | {t['t_cat']} | {t['t_cont']} |
+                | :--- | :--- |
+                | **{t['res_box_qty']}** | **{res['qty']} {t['qty_unit']}** |
+                | **{t['res_total_box']}** | **{res['total_boxes']} {t['box_unit']}** |
+                | **{t['res_total_prod']}** | **{fmt(res['total'])} {t['qty_unit']}** |
+                | {t['l_prod_act']} | {fmt(used_dims[0])}x{fmt(used_dims[1])}x{fmt(used_dims[2])} |
+                | {t['l_box']} | {fmt(b_l)}x{fmt(b_w)}x{fmt(b_h)} |
+                | {t['l_load']} | {fmt(l_l)}x{fmt(l_w)}x{fmt(l_h)} |
+                | {t['bct']} | {fmt(st_data['bct'])} kgf |
+                """)
+            
+            with d_c2:
+                st.info(f"**{t['layout_in_box']}**\n\n### {pack_c} x {pack_r} x {pack_l} (H)")
+                st.info(f"**{t['layout_on_pallet']}**\n\n### {pal_layout_txt} (H)")
+
+        st.divider()
         
-        # 2. 파레트 뷰 (상단)
         c_p2d, c_p3d = st.columns(2)
         with c_p2d:
             st.subheader(t['viewer_pallet_2d'])
-            fig_p2d = get_pallet_2d_fig(res, pallet_l, pallet_w)
+            fig_p2d = get_pallet_2d_fig(res, pl_dims_parsed[0], pl_dims_parsed[1])
             st.plotly_chart(fig_p2d, use_container_width=True)
         with c_p3d:
             st.subheader(t['viewer_pallet_3d'])
-            fig_p3d = get_pallet_3d_fig(res, pallet_l, pallet_w)
+            fig_p3d = get_pallet_3d_fig(res, pl_dims_parsed[0], pl_dims_parsed[1])
             st.plotly_chart(fig_p3d, use_container_width=True)
 
-        st.markdown("---")
-
-        # 3. 박스 내부 뷰 (하단)
         c_b2d, c_b3d = st.columns(2)
         with c_b2d:
             st.subheader(t['viewer_box_2d'])
@@ -666,5 +927,52 @@ def main():
             fig_b3d = get_prod_3d_fig(res)
             st.plotly_chart(fig_b3d, use_container_width=True)
 
+        st.divider()
+        st.subheader("📉 " + t['g_title'])
+        b_c1, b_c2 = st.columns(2)
+        
+        with b_c1:
+            fig_gauge = go.Figure(go.Indicator(
+                mode = "gauge+number+delta", value = st_data['load'],
+                domain = {'x': [0, 1], 'y': [0, 1]},
+                title = {'text': t['g_title'], 'font': {'size': 14}},
+                delta = {'reference': st_data['bct']/3, 'increasing': {'color': "red"}},
+                gauge = {
+                    'axis': {'range': [None, st_data['bct']], 'tickwidth': 1},
+                    'bar': {'color': "#2E86C1"},
+                    'steps': [{'range': [0, st_data['bct']/3], 'color': "#D4EFDF"}, {'range': [st_data['bct']/3, st_data['bct']], 'color': "#FADBD8"}],
+                    'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': st_data['bct']/3}
+                }
+            ))
+            fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
+            st.plotly_chart(fig_gauge, use_container_width=True)
+            
+        with b_c2:
+            layers = res['p_layers']
+            layer_weight = res['weight'] * res['yield_per_layer']
+            layer_nums = list(range(1, layers + 1))
+            layer_loads = [(layers - i) * layer_weight for i in layer_nums]
+            
+            fig_load = go.Figure(go.Bar(
+                x=layer_nums, 
+                y=layer_loads,
+                text=[f"{fmt(l)}kg" for l in layer_loads],
+                textposition='auto',
+                marker_color='#E74C3C'
+            ))
+            fig_load.update_layout(
+                title=t['chart_load_title'],
+                xaxis_title="Layer (1=Bottom)",
+                yaxis_title="Load (kg)",
+                height=300,
+                margin=dict(l=20, r=20, t=50, b=20)
+            )
+            st.plotly_chart(fig_load, use_container_width=True)
+
 if __name__ == "__main__":
     main()
+# Powered by Gemini
+
+
+    # streamlit run app.py
+    # git push -u origin main
