@@ -1006,3 +1006,4 @@ if __name__ == "__main__":
     # 1.git add app.py
     # 2.git commit -m "Update app.py: fix streamlit code"
     # 3.git push origin main
+    # git push origin main --force
